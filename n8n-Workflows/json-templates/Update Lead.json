@@ -1,0 +1,52 @@
+{
+  "name": "Update Lead",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "PATCH", "path": "lead-update", "responseMode": "responseNode", "options": {} },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "id": "500235cf-e06e-4784-b720-dd68880f8d80",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "assignments": { "assignments": [
+          { "id": "5be4d8a0-20d8-45eb-b5e7-1ae209b7fe09", "name": "phone", "value": "={{ $json.body.phone }}", "type": "string" },
+          { "id": "3fb8a039-5170-4f49-b755-f13d6fb1071b", "name": "status", "value": "={{ $json.body.status }}", "type": "string" }
+        ] },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [208, 0],
+      "id": "30e94262-d31c-493e-964f-da220e01f97f",
+      "name": "Set_UpdateData"
+    },
+    {
+      "parameters": { "operation": "update", "collection": "leads", "updateKey": "phone", "fields": "status", "options": {} },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [416, 0],
+      "id": "f68553ff-a9ae-4077-bbd6-bd816fcc8a81",
+      "name": "Update documents"
+    },
+    {
+      "parameters": { "options": {} },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [640, 0],
+      "id": "c5cbea7f-938e-415a-b116-0ee8bc73498b",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Set_UpdateData", "type": "main", "index": 0 }]] },
+    "Update documents": { "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]] },
+    "Set_UpdateData": { "main": [[{ "node": "Update documents", "type": "main", "index": 0 }]] }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1", "binaryMode": "separate" },
+  "tags": []
+}

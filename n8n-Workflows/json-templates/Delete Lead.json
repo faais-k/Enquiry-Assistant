@@ -1,0 +1,49 @@
+{
+  "name": "Delete Lead",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "DELETE", "path": "lead-delete", "responseMode": "responseNode", "options": {} },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "id": "e57266e8-d412-4c59-939c-835dff31623c",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "assignments": { "assignments": [{ "id": "af3e0a3d-8522-47de-8ec4-e8be39bd240b", "name": "phone", "value": "={{ $json.body.phone }}", "type": "string" }] },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [208, 0],
+      "id": "b8b1e425-aae5-46c5-83cb-a592ad840a2e",
+      "name": "Set_DeleteData"
+    },
+    {
+      "parameters": { "operation": "delete", "collection": "leads", "query": "={ \"phone\": \"{{ $json.phone }}\" }", "options": {} },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [416, 0],
+      "id": "c80456da-a0c8-4e3f-b7fd-1873c0767752",
+      "name": "Delete documents"
+    },
+    {
+      "parameters": { "options": {} },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [640, 0],
+      "id": "89ac760b-e4c1-44d8-89fb-86421f573378",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Set_DeleteData", "type": "main", "index": 0 }]] },
+    "Set_DeleteData": { "main": [[{ "node": "Delete documents", "type": "main", "index": 0 }]] },
+    "Delete documents": { "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]] }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1", "binaryMode": "separate" },
+  "tags": []
+}

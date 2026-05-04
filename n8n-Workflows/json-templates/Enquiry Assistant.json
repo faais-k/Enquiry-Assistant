@@ -1,0 +1,515 @@
+{
+  "name": "Enquiry Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "enquiry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1104,
+        1136
+      ],
+      "id": "webhook-node-id",
+      "name": "Webhook_Incoming",
+      "webhookId": "REPLACE_WITH_YOUR_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=YOUR_GEMINI_API_KEY",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"Extract the following from this enquiry message. Return ONLY valid JSON, no markdown, no explanation.\\n\\nMessage: \\\"{{ $json.body.message }}\\\"\\n\\nReturn exactly this structure:\\n{\\n  \\\"name\\\": \\\"string or null\\\",\\n  \\\"phone\\\": \\\"string or null\\\",\\n  \\\"course_interest\\\": \\\"python | web_development | data_science | digital_marketing | other | null\\\",\\n  \\\"intent\\\": \\\"new_enquiry | follow_up | complaint | general | help\\\",\\n  \\\"urgency_words\\\": false,\\n  \\\"extraction_confidence\\\": \\\"high | medium | low\\\",\\n  \\\"summary\\\": \\\"one line summary\\\"\\n}\\n\\nMapping rules for course_interest:\\n- python, py, Python for Professionals, python course → python\\n- web, web development, full stack, fullstack, Full Stack Web Development → web_development\\n- data science, data, ML, machine learning, AI, Data Science & ML → data_science\\n- digital marketing, marketing, Digital Marketing Mastery → digital_marketing\\n- anything else course related → other\\n- no course mentioned → null\\n\\nMapping rules for intent:\\n- asking about a course, new contact → new_enquiry\\n- following up, asking again → follow_up\\n- asking for help, what courses, list courses → help\\n- complaint or issue → complaint\\n- general chat → general\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -880,
+        1136
+      ],
+      "id": "gemini-extract-node-id",
+      "name": "Gemini_Extract",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawMessage = $('Webhook_Incoming').item.json.body.message || \"\";\nconst sessionId = $('Webhook_Incoming').item.json.body.sessionId || \"unknown\";\n\n// Handle Gemini rate limit or API error\nconst geminiResponse = $input.first().json;\nif (!geminiResponse.candidates) {\n  return [{ json: {\n    name: null, phone: null, course_interest: null,\n    intent: \"manual_review\", urgency_words: false,\n    extraction_confidence: \"low\",\n    summary: \"API rate limit or error\",\n    raw_message: rawMessage, session_id: sessionId,\n    created_at: new Date().toISOString(),\n    last_contacted_at: new Date().toISOString(),\n    priority_score: 0\n  }}];\n}\n\nconst geminiText = geminiResponse.candidates[0].content.parts[0].text;\nconst clean = geminiText.replace(/```json|```/g, \"\").trim();\n\nlet parsed;\ntry {\n  parsed = JSON.parse(clean);\n} catch (e) {\n  parsed = {\n    name: null,\n    phone: null,\n    course_interest: null,\n    intent: \"manual_review\",\n    urgency_words: false,\n    extraction_confidence: \"low\",\n    summary: \"Failed to parse AI extraction\"\n  };\n}\n\n// Normalize phone to string\nparsed.phone = parsed.phone ? String(parsed.phone) : null;\n\n// Attach raw message\nparsed.raw_message = rawMessage;\nparsed.session_id = sessionId;\n\n\n// Compute timestamps once\nconst now = new Date().toISOString();\nparsed.created_at = now;\nparsed.last_contacted_at = now;\n\n// Priority score\nlet score = 0;\nif (parsed.phone) score += 30;\nif (parsed.course_interest && parsed.course_interest !== \"other\" && parsed.course_interest !== null) score += 25;\nif (parsed.extraction_confidence === \"high\") score += 20;\nif (parsed.urgency_words === true) score += 15;\nif (parsed.intent === \"new_enquiry\") score += 10;\nparsed.priority_score = score;\n\nreturn [{ json: parsed }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        1136
+      ],
+      "id": "parse-json-node-id",
+      "name": "Parse_JSON"
+    },
+    {
+      "parameters": {
+        "collection": "leads",
+        "options": {},
+        "query": "={{ $json.phone ? '{ \"phone\": \"' + $json.phone + '\" }' : '{ \"session_id\": \"' + $json.session_id + '\" }' }}"
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [
+        -432,
+        1136
+      ],
+      "id": "mongo-find-node-id",
+      "name": "Mongo_FindDuplicate",
+      "alwaysOutputData": true,
+      "credentials": {
+        "mongoDb": {
+          "id": "YOUR_MONGO_CREDENTIAL_ID",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4fcd1087-9aa5-4f7d-859f-5bd174e7ca60",
+              "leftValue": "={{ $items(\"Mongo_FindDuplicate\")[0]?.json?._id !== undefined }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -208,
+        1136
+      ],
+      "id": "if-duplicate-node-id",
+      "name": "IF_Duplicate"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "collection": "leads",
+        "fields": "name,phone,course_interest,intent,summary,extraction_confidence,priority_score,raw_message,status,created_at,last_contacted_at,interaction_count",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [
+        464,
+        1280
+      ],
+      "id": "mongo-insert-node-id",
+      "name": "Insert documents",
+      "credentials": {
+        "mongoDb": {
+          "id": "YOUR_MONGO_CREDENTIAL_ID",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5331b461-85a4-47f1-8ed4-5d3720006328",
+              "name": "name",
+              "value": "={{ $('Parse_JSON').item.json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "c5b40fe1-8163-4305-943b-db7c32e6e2a5",
+              "name": "phone",
+              "value": "={{ $('Parse_JSON').item.json.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "e552d09f-5ac3-4721-8a79-ea420cde6363",
+              "name": "course_interest",
+              "value": "={{ $('Parse_JSON').item.json.course_interest }}",
+              "type": "string"
+            },
+            {
+              "id": "14da7f01-a2b3-4ecd-86a8-b861e4ea441f",
+              "name": "intent",
+              "value": "={{ $('Parse_JSON').item.json.intent }}",
+              "type": "string"
+            },
+            {
+              "id": "a2763425-2c1f-485e-bdd3-cf32dec1b4e8",
+              "name": "summary",
+              "value": "={{ $('Parse_JSON').item.json.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "69a0b412-36e4-4bd5-a5f6-3980aa120af6",
+              "name": "extraction_confidence",
+              "value": "={{ $('Parse_JSON').item.json.extraction_confidence }}",
+              "type": "string"
+            },
+            {
+              "id": "1d97b1b7-da0c-439d-ac8c-e36e252d4275",
+              "name": "priority_score",
+              "value": "={{ $('Parse_JSON').item.json.priority_score }}",
+              "type": "number"
+            },
+            {
+              "id": "eaec11f7-ed95-4388-ab8c-d6c2a82c6d09",
+              "name": "raw_message",
+              "value": "={{ $('Parse_JSON').item.json.raw_message }}",
+              "type": "string"
+            },
+            {
+              "id": "383f0003-989c-490b-b131-c447a9c728e5",
+              "name": "created_at",
+              "value": "={{ $('Parse_JSON').item.json.created_at }}",
+              "type": "string"
+            },
+            {
+              "id": "d78aa23a-6d55-47f7-bca8-3629f67c2b30",
+              "name": "last_contacted_at",
+              "value": "={{ $('Parse_JSON').item.json.last_contacted_at }}",
+              "type": "string"
+            },
+            {
+              "id": "8080688b-9c48-4b9b-9a7e-8232f1e46e9b",
+              "name": "interaction_count",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "934f1d15-a94b-495a-a2e1-5e72c4f1c1b6",
+              "name": "status",
+              "value": "={{ $('Parse_JSON').item.json.extraction_confidence === 'low' ? 'manual_review' : 'new' }}",
+              "type": "string"
+            },
+            {
+              "id": "session_id_assign",
+              "name": "session_id",
+              "value": "={{ $('Parse_JSON').item.json.session_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        1232
+      ],
+      "id": "set-lead-node-id",
+      "name": "Set_LeadData"
+    },
+    {
+      "parameters": {
+        "jsCode": "const catalogue = {\n  python: {\n    name: \"Python for Professionals\",\n    duration: \"3 months\",\n    mode: \"Online + Offline\",\n    fee: \"Rs.12,000\",\n    projects: \"5 real-world projects\",\n    next_batch: \"May 15, 2026\"\n  },\n  web_development: {\n    name: \"Full Stack Web Development\",\n    duration: \"4 months\",\n    mode: \"Online\",\n    fee: \"Rs.15,000\",\n    projects: \"3 capstone projects\",\n    next_batch: \"May 20, 2026\"\n  },\n  data_science: {\n    name: \"Data Science & ML\",\n    duration: \"5 months\",\n    mode: \"Online + Offline\",\n    fee: \"Rs.18,000\",\n    projects: \"4 industry datasets\",\n    next_batch: \"June 1, 2026\"\n  },\n  digital_marketing: {\n    name: \"Digital Marketing Mastery\",\n    duration: \"2 months\",\n    mode: \"Online\",\n    fee: \"Rs.8,000\",\n    projects: \"Live campaign management\",\n    next_batch: \"May 12, 2026\"\n  }\n};\n\n// Handle both new lead (Set_LeadData) and duplicate (Set_UpsertData) branches\nlet input;\nlet is_returning = false;\ntry {\n  input = $('Set_LeadData').item.json;\n} catch(e) {\n  input = $('Set_UpsertData').item.json;\n  is_returning = true;\n}\ninput.is_returning = is_returning;\n\n// For duplicate branch, also pull course_interest from Parse_JSON\nif (!input.course_interest) {\n  input = { ...input, ...$('Parse_JSON').item.json };\n}\n\nconst key = input.course_interest;\nconst course = catalogue[key] || {\n  name: \"Our Training Programs\",\n  duration: \"Varies by course\",\n  mode: \"Online + Offline\",\n  fee: \"Contact us for pricing\",\n  projects: \"Hands-on projects included\",\n  next_batch: \"Batches running monthly\"\n};\n\nreturn [{\n  json: {\n    ...input,\n    course\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        928
+      ],
+      "id": "catalogue-node-id",
+      "name": "Course_Catalogue"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=YOUR_GEMINI_API_KEY",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": \"You are a friendly enquiry assistant for EduReach Training Academy.\\nRespond ONLY using the course data below. Do NOT add any details not in this data.\\n\\nAvailable Courses:\\n- Python for Professionals (Rs.12,000, 3 months)\\n- Full Stack Web Development (Rs.15,000, 4 months)\\n- Data Science & ML (Rs.18,000, 5 months)\\n- Digital Marketing Mastery (Rs.8,000, 2 months)\\n\\nUser name: {{ $json.name }}\\nReturning user: {{ $json.is_returning }}\\nIntent: {{ $json.intent }}\\n\\nCourse data:\\n- Course: {{ $json.course.name }}\\n- Duration: {{ $json.course.duration }}\\n- Mode: {{ $json.course.mode }}\\n- Fee: {{ $json.course.fee }}\\n- Projects: {{ $json.course.projects }}\\n- Next Batch: {{ $json.course.next_batch }}\\n\\nInstructions:\\n1. If Intent is help or general, briefly list the available courses above and ask how you can assist.\\n2. If Intent is manual_review, say you have saved their message and the team will follow up.\\n3. If Returning user is true, welcome them back and answer their query.\\n4. Otherwise, greet them by name, list course details as bullets, ask to confirm phone for follow-up.\\n\\nKeep it under 100 words. Return ONLY the message text.\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        688,
+        1040
+      ],
+      "id": "gemini-reply-node-id",
+      "name": "Gemini_Reply",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const replyText = $input.first().json.candidates[0].content.parts[0].text;\n  return [{ json: { reply: replyText.trim() } }];\n} catch(e) {\n  return [{ json: { reply: \"Thank you for your enquiry! Our team will get back to you shortly.\" } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        1040
+      ],
+      "id": "extract-reply-node-id",
+      "name": "Extract_Reply"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1136,
+        1040
+      ],
+      "id": "respond-node-id",
+      "name": "Respond_Webhook"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "collection": "leads",
+        "updateKey": "phone",
+        "fields": "=last_message,last_contacted_at,interaction_count,name,course_interest",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1.2,
+      "position": [
+        208,
+        1072
+      ],
+      "id": "mongo-upsert-node-id",
+      "name": "Mongo_Upsert",
+      "credentials": {
+        "mongoDb": {
+          "id": "YOUR_MONGO_CREDENTIAL_ID",
+          "name": "MongoDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bb1e7bc5-01fb-4a29-9a59-dbfa7191e8f1",
+              "name": "phone",
+              "value": "={{ $('Parse_JSON').item.json.phone || $items(\"Mongo_FindDuplicate\")[0]?.json?.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "d6032643-0739-4f1b-924b-282b63ed2f6c",
+              "name": "last_message",
+              "value": "={{ $('Parse_JSON').item.json.raw_message }}",
+              "type": "string"
+            },
+            {
+              "id": "b53de6bc-ecf3-4126-9443-e58b6ef4a24a",
+              "name": "last_contacted_at",
+              "value": "={{ $('Parse_JSON').item.json.last_contacted_at }}",
+              "type": "string"
+            },
+            {
+              "id": "session_id_upsert",
+              "name": "session_id",
+              "value": "={{ $('Parse_JSON').item.json.session_id }}",
+              "type": "string"
+            },
+            {
+              "id": "interaction_count_upsert",
+              "name": "interaction_count",
+              "value": "={{ ($items(\"Mongo_FindDuplicate\")[0]?.json?.interaction_count || 1) + 1 }}",
+              "type": "number"
+            },
+            {
+              "id": "id_upsert",
+              "name": "_id",
+              "value": "={{ $items(\"Mongo_FindDuplicate\")[0].json._id }}",
+              "type": "string"
+            },
+            {
+              "id": "608a9ca2-e2fe-4fdd-9f53-1b6306c5113e",
+              "name": "name",
+              "value": "={{ $('Parse_JSON').item.json.name || $items(\"Mongo_FindDuplicate\")[0]?.json?.name }}",
+              "type": "string"
+            },
+            {
+              "id": "6c260bf9-d270-43f2-ae07-ccc83d52585b",
+              "name": "course_interest",
+              "value": "={{ $('Parse_JSON').item.json.course_interest || $items(\"Mongo_FindDuplicate\")[0]?.json?.course_interest }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        16,
+        992
+      ],
+      "id": "set-upsert-node-id",
+      "name": "Set_UpsertData"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook_Incoming": {
+      "main": [
+        [
+          {
+            "node": "Gemini_Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini_Extract": {
+      "main": [
+        [
+          {
+            "node": "Parse_JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse_JSON": {
+      "main": [
+        [
+          {
+            "node": "Mongo_FindDuplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mongo_FindDuplicate": {
+      "main": [
+        [
+          {
+            "node": "IF_Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Set_UpsertData",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set_LeadData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set_LeadData": {
+      "main": [
+        [
+          {
+            "node": "Insert documents",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Course_Catalogue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Course_Catalogue": {
+      "main": [
+        [
+          {
+            "node": "Gemini_Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini_Reply": {
+      "main": [
+        [
+          {
+            "node": "Extract_Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract_Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond_Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mongo_Upsert": {
+      "main": [
+        []
+      ]
+    },
+    "Set_UpsertData": {
+      "main": [
+        [
+          {
+            "node": "Mongo_Upsert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Course_Catalogue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "tags": []
+}
